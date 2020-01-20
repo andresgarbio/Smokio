@@ -1,21 +1,21 @@
 package com.google.location.nearby.apps.rockpaperscissors;
 
-import static java.nio.charset.StandardCharsets.UTF_8;
-
 import android.Manifest;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.os.Bundle;
-import androidx.annotation.CallSuper;
-import androidx.annotation.NonNull;
-import androidx.annotation.Nullable;
-import androidx.core.content.ContextCompat;
-import androidx.appcompat.app.AppCompatActivity;
 import android.util.Log;
 import android.view.View;
 import android.widget.Button;
 import android.widget.TextView;
 import android.widget.Toast;
+
+import androidx.annotation.CallSuper;
+import androidx.annotation.NonNull;
+import androidx.annotation.Nullable;
+import androidx.appcompat.app.AppCompatActivity;
+import androidx.core.content.ContextCompat;
+
 import com.google.android.gms.nearby.Nearby;
 import com.google.android.gms.nearby.connection.AdvertisingOptions;
 import com.google.android.gms.nearby.connection.ConnectionInfo;
@@ -31,8 +31,34 @@ import com.google.android.gms.nearby.connection.PayloadTransferUpdate;
 import com.google.android.gms.nearby.connection.PayloadTransferUpdate.Status;
 import com.google.android.gms.nearby.connection.Strategy;
 
+import static java.nio.charset.StandardCharsets.UTF_8;
+import android.bluetooth.BluetoothAdapter;
+import android.bluetooth.BluetoothDevice;
+import android.bluetooth.BluetoothSocket;
+import android.os.*;
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.util.UUID;
+import android.util.Log;
+
+
+
 /** Activity controlling the Rock Paper Scissors game */
 public class MainActivity extends AppCompatActivity {
+
+  BluetoothSocket socket;
+  Handler bt_handler;
+  int handlerState;
+
+  DataOutputStream outputStream;
+  DataInputStream inputStream;
+  ConnectedThread connectedThread;
+  BluetoothAdapter adapter=BluetoothAdapter.getDefaultAdapter();
+  BluetoothDevice device=adapter.getRemoteDevice("98:D3:31:80:3E:85");
+  UUID MY_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
+
+
 
   private static final String TAG = "RockPaperScissors";
 
@@ -84,6 +110,48 @@ public class MainActivity extends AppCompatActivity {
   private TextView opponentText;
   private TextView statusText;
   private TextView scoreText;
+
+  public class ConnectedThread extends Thread {
+
+    DataInputStream inputStream=null;
+    int avilableBytes=0;
+
+    public ConnectedThread(BluetoothSocket socket){
+      DataInputStream temp=null;
+      try{
+        temp= new DataInputStream(socket.getInputStream());
+      }catch (IOException e){
+        e.printStackTrace();
+      }
+      inputStream=temp;
+    }
+
+    public void run() {
+      try{
+        int bytes;
+        while (true){
+          try{
+            avilableBytes=inputStream.available();
+            byte[] buffer=new byte[avilableBytes];
+            if (avilableBytes>0){
+              bytes=inputStream.read(buffer);
+              final String readMessage=new String(buffer);
+              if (bytes>=3){
+                bt_handler.obtainMessage(handlerState, bytes, -1, readMessage).sendToTarget();
+              }
+              else {
+                SystemClock.sleep(50);
+              }
+            }
+          }catch (IOException e){
+            e.printStackTrace();
+          }
+        }
+      }catch (Exception e){
+        e.printStackTrace();
+      }
+    }
+  }
 
   // Callbacks for receiving payloads
   private final PayloadCallback payloadCallback =
@@ -159,6 +227,10 @@ public class MainActivity extends AppCompatActivity {
     paperButton = findViewById(R.id.paper);
     scissorsButton = findViewById(R.id.scissors);
 
+    rockButton.setEnabled(true);
+    paperButton.setEnabled(true);
+    scissorsButton.setEnabled(true);
+
     opponentText = findViewById(R.id.opponent_name);
     statusText = findViewById(R.id.status);
     scoreText = findViewById(R.id.score);
@@ -168,16 +240,35 @@ public class MainActivity extends AppCompatActivity {
 
     connectionsClient = Nearby.getConnectionsClient(this);
 
+    bt_handler = new Handler(){
+      @Override
+      public void handleMessage(Message msg) {
+        if (msg.what==handlerState){
+          String readMessage=(String)msg.obj;
+          Log.d(TAG, readMessage);
+          findOpponentButton.setVisibility(readMessage.equals("fire") ? View.VISIBLE : View.GONE );
+          if(readMessage.equals("fire")){
+            Log.d(TAG, "got fire");
+            findOpponentButton.setEnabled(true);
+          }
+          rockButton.setEnabled(true);
+          paperButton.setEnabled(true);
+          scissorsButton.setEnabled(true);
+
+        }
+      }
+    };
+
     resetGame();
   }
 
   @Override
   protected void onStart() {
     super.onStart();
-
     if (!hasPermissions(this, REQUIRED_PERMISSIONS)) {
       requestPermissions(REQUIRED_PERMISSIONS, REQUEST_CODE_REQUIRED_PERMISSIONS);
     }
+
   }
 
   @Override
@@ -222,8 +313,18 @@ public class MainActivity extends AppCompatActivity {
 
   /** Finds an opponent to play the game with using Nearby Connections. */
   public void findOpponent(View view) {
-    startAdvertising();
-    startDiscovery();
+    try {
+      socket=device.createInsecureRfcommSocketToServiceRecord(MY_UUID);
+      socket.connect();
+      outputStream= new DataOutputStream(socket.getOutputStream());
+      inputStream= new DataInputStream(socket.getInputStream());
+      connectedThread = new ConnectedThread(socket);
+      connectedThread.start();
+    }catch (IOException e){
+      /** Handle the exception here **/
+    }
+    //startAdvertising();
+    //startDiscovery();
     setStatusText(getString(R.string.status_searching));
     findOpponentButton.setEnabled(false);
   }
@@ -322,9 +423,9 @@ public class MainActivity extends AppCompatActivity {
 
   /** Enables/disables the rock, paper, and scissors buttons. */
   private void setGameChoicesEnabled(boolean enabled) {
-    rockButton.setEnabled(enabled);
-    paperButton.setEnabled(enabled);
-    scissorsButton.setEnabled(enabled);
+    //rockButton.setEnabled(enabled);
+    //paperButton.setEnabled(enabled);
+    //scissorsButton.setEnabled(enabled);
   }
 
   /** Shows a status message to the user. */
@@ -342,3 +443,6 @@ public class MainActivity extends AppCompatActivity {
     scoreText.setText(getString(R.string.game_score, myScore, opponentScore));
   }
 }
+
+
+
